@@ -38,7 +38,11 @@ export async function POST(request: Request) {
           role: 'user',
           content: [
             { type: 'input_text', text: PROMPT },
-            { type: 'input_image', image_url: dataUrl }
+            {
+              type: 'input_image',
+              image_url: { url: dataUrl },
+              detail: 'auto'
+            }
           ]
         }
       ]
