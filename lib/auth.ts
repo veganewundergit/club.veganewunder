@@ -1,6 +1,6 @@
 import type { Session } from '@supabase/supabase-js';
 import type { UserProfile } from '@/types/user';
-import { createSupabaseServerClient } from '@/lib/supabaseClient';
+import { createSupabaseServerClient, type SupabaseServerContext } from '@/lib/supabaseClient';
 import { getMembershipStatus } from '@/lib/stripe';
 
 const DEV_BYPASS_FLAG = 'NEXT_PUBLIC_DEV_BYPASS';
@@ -9,8 +9,8 @@ export function isDevBypassEnabled() {
   return process.env[DEV_BYPASS_FLAG] === 'true';
 }
 
-export async function getSession(): Promise<Session | null> {
-  const supabase = createSupabaseServerClient();
+export async function getSession(context: SupabaseServerContext): Promise<Session | null> {
+  const supabase = createSupabaseServerClient(context);
 
   if (!supabase) {
     return null;
@@ -20,8 +20,8 @@ export async function getSession(): Promise<Session | null> {
   return data.session ?? null;
 }
 
-export async function getCurrentUserProfile() {
-  const supabase = createSupabaseServerClient();
+export async function getCurrentUserProfile(context: SupabaseServerContext) {
+  const supabase = createSupabaseServerClient(context);
 
   if (!supabase) {
     return null;

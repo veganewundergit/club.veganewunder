@@ -1,6 +1,5 @@
 import { createPagesBrowserClient, createPagesServerClient } from '@supabase/auth-helpers-nextjs';
 import type { SupabaseClient, Session } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -19,29 +18,15 @@ export function createSupabaseBrowserClient() {
   return createPagesBrowserClient({ supabaseUrl: supabaseConfig.url, supabaseKey: supabaseConfig.anonKey });
 }
 
-export function createSupabaseServerClient() {
+export type SupabaseServerContext = Parameters<typeof createPagesServerClient>[0];
+
+export function createSupabaseServerClient(context: SupabaseServerContext) {
   if (!supabaseConfig.url || !supabaseConfig.anonKey) {
     console.warn('Supabase Server Client not initialised. Environment variables fehlen.');
     return null;
   }
 
-  return createPagesServerClient({
-    supabaseUrl: supabaseConfig.url,
-    supabaseKey: supabaseConfig.anonKey,
-    cookies: {
-      get(name: string) {
-        return cookies().get(name)?.value;
-      },
-      set(name: string, value: string, options?: { path?: string; maxAge?: number }) {
-        const cookieStore = cookies();
-        cookieStore.set(name, value, options);
-      },
-      remove(name: string) {
-        const cookieStore = cookies();
-        cookieStore.delete(name);
-      }
-    }
-  });
+  return createPagesServerClient(context);
 }
 
 export async function getBrowserSession(client?: SupabaseClient): Promise<Session | null> {
