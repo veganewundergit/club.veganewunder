@@ -1,10 +1,25 @@
-export const SHOPPING_STORAGE_KEY = 'vw.shoppingList';
+export const SHOPPING_STORAGE_KEY = 'vw.smartList';
 
-export type ShoppingSections = 'Obst & Gemüse' | 'Trockenware' | 'Kühlregal' | 'Tiefkühl' | 'Sonstiges';
+export type ShoppingSections = 'Obst & Gemüse' | 'Kühlregal' | 'Trockenware' | 'Tiefkühl' | 'Sonstiges';
 
-export const SHOPPING_SECTIONS: ShoppingSections[] = ['Obst & Gemüse', 'Trockenware', 'Kühlregal', 'Tiefkühl', 'Sonstiges'];
+export const SHOPPING_SECTIONS: ShoppingSections[] = ['Obst & Gemüse', 'Kühlregal', 'Trockenware', 'Tiefkühl', 'Sonstiges'];
 
-export type ShoppingList = Partial<Record<ShoppingSections, string[]>>;
+export type EinkaufsItem = {
+  id: string;
+  name: string;
+  kategorie: ShoppingSections;
+  erledigt: boolean;
+  vorhanden: boolean;
+  tags?: string[];
+};
+
+const DICTIONARY: Record<ShoppingSections, string[]> = {
+  'Obst & Gemüse': ['karotte', 'kartoffel', 'zwiebel', 'knoblauch', 'tomate', 'paprika', 'gurke', 'apfel', 'banane', 'spinat', 'traube', 'beere'],
+  Kühlregal: ['tofu', 'hafermilch', 'sojasoße', 'joghurt', 'butter'],
+  Trockenware: ['reis', 'nudeln', 'linsen', 'bohnen', 'mehl', 'haferflocken'],
+  Tiefkühl: ['tiefkühl', 'frost', 'eis'],
+  Sonstiges: []
+};
 
 const LABEL_CANDIDATES = ['name', 'Name', 'label', 'Label', 'Zutat', 'Bezeichnung', 'value', 'Value', 'text', 'Text', 'title', 'Title'];
 
@@ -27,12 +42,9 @@ export function extractIngredientLabel(raw: unknown): string {
       const candidate = record[key];
       if (typeof candidate === 'string') {
         const trimmed = candidate.trim();
-        if (trimmed) {
-          return trimmed;
-        }
+        if (trimmed) return trimmed;
       }
     }
-
     const stringified = JSON.stringify(raw);
     if (stringified && stringified !== '{}') {
       return stringified;
@@ -46,48 +58,68 @@ export function extractIngredientLabel(raw: unknown): string {
   return String(raw);
 }
 
-export function normalizeFromApi(data: unknown): ShoppingList {
-  if (!data || typeof data !== 'object') {
-    return {};
-  }
-
-  return Object.entries(data as Record<string, unknown>).reduce<ShoppingList>((acc, [section, value]) => {
-    if (!Array.isArray(value)) {
-      return acc;
-    }
-
-    const normalized = value
-      .map((item) => extractIngredientLabel(item))
-      .map((item) => item.trim())
-      .filter((item) => Boolean(item));
-
-    if (normalized.length > 0 && isShoppingSection(section)) {
-      acc[section] = normalized;
-    }
-
-    return acc;
-  }, {});
-}
-
 export function isShoppingSection(section: string): section is ShoppingSections {
   return SHOPPING_SECTIONS.includes(section as ShoppingSections);
 }
 
-export function sanitizeShoppingList(list: ShoppingList): ShoppingList {
-  return Object.entries(list ?? {}).reduce<ShoppingList>((acc, [section, items]) => {
-    if (!Array.isArray(items) || !isShoppingSection(section)) {
-      return acc;
+export function normalizeFromApi(data: unknown): EinkaufsItem[] {
+  if (!data || typeof data !== 'object') {
+    return [];
+  }
+
+  const seen = new Map<string, EinkaufsItem>();
+
+  for (const [section, values] of Object.entries(data as Record<string, unknown>)) {
+    if (!isShoppingSection(section) || !Array.isArray(values)) continue;
+
+    for (const entry of values) {
+      const label = extractIngredientLabel(entry);
+      if (!label) continue;
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+
+      seen.set(key, {
+        id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        name: label,
+        kategorie: section,
+        erledigt: false,
+        vorhanden: false
+      });
     }
+  }
 
-    const sanitized = items
-      .map((item) => extractIngredientLabel(item))
-      .map((item) => item.trim())
-      .filter((item) => Boolean(item));
+  const items = Array.from(seen.values());
+  return sortItems(items);
+}
 
-    if (sanitized.length > 0) {
-      acc[section] = sanitized;
-    }
+export function sortItems(items: EinkaufsItem[]): EinkaufsItem[] {
+  return [...items].sort((a, b) => {
+    const catDiff = SHOPPING_SECTIONS.indexOf(a.kategorie) - SHOPPING_SECTIONS.indexOf(b.kategorie);
+    if (catDiff !== 0) return catDiff;
+    return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+  });
+}
 
+export function groupByCategory(items: EinkaufsItem[]): Record<ShoppingSections, EinkaufsItem[]> {
+  return SHOPPING_SECTIONS.reduce<Record<ShoppingSections, EinkaufsItem[]>>((acc, section) => {
+    acc[section] = items.filter((item) => item.kategorie === section);
     return acc;
-  }, {});
+  }, {
+    'Obst & Gemüse': [],
+    Kühlregal: [],
+    Trockenware: [],
+    Tiefkühl: [],
+    Sonstiges: []
+  });
+}
+
+export function autoKategorie(name: string): ShoppingSections {
+  const lower = name.toLowerCase();
+  for (const section of SHOPPING_SECTIONS) {
+    const keywords = DICTIONARY[section];
+    if (keywords.some((keyword) => lower.includes(keyword))) {
+      return section;
+    }
+  }
+  return 'Sonstiges';
 }

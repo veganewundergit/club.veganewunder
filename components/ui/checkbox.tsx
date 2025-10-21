@@ -2,25 +2,44 @@
 
 import * as React from 'react';
 
-interface CheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  id: string;
+interface CheckboxProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   checked?: boolean;
-  onCheckedChange?: (checked: boolean) => void;
+  animated?: boolean;
 }
 
-export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(function Checkbox(
-  { id, checked, onCheckedChange, className, ...props },
+export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(function Checkbox(
+  { checked = false, animated = true, className, onClick, ...props },
   ref
 ) {
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    onClick?.(event);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onClick?.(event as unknown as React.MouseEvent<HTMLButtonElement>);
+    }
+  };
+
   return (
-    <input
-      id={id}
+    <button
       ref={ref}
-      type="checkbox"
-      className={`h-5 w-5 rounded border border-border bg-background text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${className ?? ''}`}
-      checked={checked}
-      onChange={(event) => onCheckedChange?.(event.target.checked)}
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      className={`relative flex h-6 w-6 items-center justify-center rounded-full border border-border transition ${
+        checked ? 'border-primary bg-primary' : 'bg-background'
+      } ${animated ? 'duration-300 ease-out' : ''} ${className ?? ''}`}
       {...props}
-    />
+    >
+      <span
+        className={`pointer-events-none block h-3 w-3 rounded-full transition-transform duration-300 ease-out ${
+          checked ? 'scale-100 bg-primary-foreground' : 'scale-0 bg-transparent'
+        }`}
+      />
+    </button>
   );
 });

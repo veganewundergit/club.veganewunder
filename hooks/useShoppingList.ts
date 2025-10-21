@@ -1,113 +1,148 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ShoppingList, ShoppingSections } from '@/lib/shopping';
-import { SHOPPING_STORAGE_KEY, sanitizeShoppingList, normalizeFromApi, extractIngredientLabel } from '@/lib/shopping';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SHOPPING_STORAGE_KEY, SHOPPING_SECTIONS, normalizeFromApi, sortItems, autoKategorie, type EinkaufsItem } from '@/lib/shopping';
 
-type CheckedMap = Record<string, boolean>;
+export type FilterKey = 'alle' | 'offen' | 'erledigt';
 
-export interface UseShoppingListResult {
-  list: ShoppingList;
-  checked: CheckedMap;
-  setList: (next: ShoppingList) => void;
-  reset: () => void;
-  setChecked: (section: ShoppingSections, item: string, value: boolean) => void;
-  bulkCheck: (section: ShoppingSections, value: boolean) => void;
-  saveLocal: () => void;
-  loadLocal: () => void;
-  normalizeFromApi: (data: unknown) => ShoppingList;
+interface PersistedState {
+  items: EinkaufsItem[];
 }
 
-function buildKey(section: string, item: string) {
-  return `${section}::${item}`;
+interface UseShoppingListResult {
+  items: EinkaufsItem[];
+  filter: FilterKey;
+  visibleItems: EinkaufsItem[];
+  setFilter: (filter: FilterKey) => void;
+  addManualItem: (name: string) => void;
+  replaceWithApiData: (data: unknown) => void;
+  setErledigt: (id: string, erledigt: boolean) => void;
+  removeItem: (id: string) => void;
+  restoreItem: (item: EinkaufsItem) => void;
+  reset: () => void;
+  resetChecks: () => void;
+  markAll: (ids: string[], erledigt: boolean) => void;
+}
+
+function applyFilter(items: EinkaufsItem[], filter: FilterKey) {
+  switch (filter) {
+    case 'offen':
+      return items.filter((item) => !item.erledigt);
+    case 'erledigt':
+      return items.filter((item) => item.erledigt);
+    default:
+      return items;
+  }
 }
 
 export function useShoppingList(): UseShoppingListResult {
-  const [list, setListState] = useState<ShoppingList>({});
-  const [checked, setCheckedMap] = useState<CheckedMap>({});
+  const [items, setItems] = useState<EinkaufsItem[]>([]);
+  const [filter, setFilter] = useState<FilterKey>('alle');
+  const persistTimeout = useRef<number | null>(null);
 
-  const setList = useCallback((next: ShoppingList) => {
-    const sanitized = sanitizeShoppingList(next);
-    setListState(sanitized);
+  const schedulePersist = useCallback((next: EinkaufsItem[]) => {
+    if (typeof window === 'undefined') return;
+    if (persistTimeout.current) {
+      window.clearTimeout(persistTimeout.current);
+    }
+    persistTimeout.current = window.setTimeout(() => {
+      const payload: PersistedState = { items: next };
+      window.localStorage.setItem(SHOPPING_STORAGE_KEY, JSON.stringify(payload));
+      persistTimeout.current = null;
+    }, 250);
+  }, []);
 
-    setCheckedMap((prev) => {
-      const updated: CheckedMap = {};
-      Object.entries(sanitized).forEach(([section, items]) => {
-        items?.forEach((item) => {
-          const key = buildKey(section, extractIngredientLabel(item));
-          updated[key] = prev[key] ?? false;
-        });
-      });
-      return updated;
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(SHOPPING_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as PersistedState;
+      if (Array.isArray(parsed.items)) {
+        const sorted = sortItems(parsed.items.map((item) => ({ ...item, erledigt: Boolean(item.erledigt), vorhanden: Boolean(item.vorhanden) })));
+        setItems(sorted);
+      }
+    } catch (error) {
+      console.error('Konnte Einkaufsliste nicht laden', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    schedulePersist(items);
+  }, [items, schedulePersist]);
+
+  const replaceWithApiData = useCallback((data: unknown) => {
+    const normalized = normalizeFromApi(data);
+    setItems(normalized);
+  }, []);
+
+  const addManualItem = useCallback((rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
+    const normalized = name.charAt(0).toUpperCase() + name.slice(1);
+    setItems((prev) => {
+      if (prev.some((item) => item.name.toLowerCase() === normalized.toLowerCase())) {
+        return prev;
+      }
+
+      const nextItem: EinkaufsItem = {
+        id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        name: normalized,
+        kategorie: autoKategorie(normalized),
+        erledigt: false,
+        vorhanden: false
+      };
+
+      return sortItems([...prev, nextItem]);
     });
   }, []);
 
+  const setErledigt = useCallback((id: string, erledigt: boolean) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, erledigt } : item)));
+  }, []);
+
+  const removeItem = useCallback((id: string) => {
+    setItems((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const restoreItem = useCallback((item: EinkaufsItem) => {
+    setItems((prev) => sortItems([...prev, item]));
+  }, []);
+
   const reset = useCallback(() => {
-    setListState({});
-    setCheckedMap({});
+    setItems([]);
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(SHOPPING_STORAGE_KEY);
     }
   }, []);
 
-  const setChecked = useCallback((section: ShoppingSections, item: string, value: boolean) => {
-    const key = buildKey(section, item);
-    setCheckedMap((prev) => ({ ...prev, [key]: value }));
+  const markAll = useCallback((ids: string[], erledigt: boolean) => {
+    setItems((prev) => prev.map((item) => (ids.includes(item.id) ? { ...item, erledigt } : item)));
   }, []);
 
-  const bulkCheck = useCallback((section: ShoppingSections, value: boolean) => {
-    setCheckedMap((prev) => {
-      const next = { ...prev };
-      const items = list[section] ?? [];
-      items.forEach((item) => {
-        const key = buildKey(section, item);
-        next[key] = value;
-      });
-      return next;
-    });
-  }, [list]);
+  const resetChecks = useCallback(() => {
+    setItems((prev) => prev.map((item) => ({ ...item, erledigt: false })));
+  }, []);
 
-  const saveLocal = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const payload = { list, checked };
-    window.localStorage.setItem(SHOPPING_STORAGE_KEY, JSON.stringify(payload));
-  }, [checked, list]);
+  const visibleItems = useMemo(() => {
+    const base = applyFilter(items, filter);
+    const erledigtItems = base.filter((item) => item.erledigt);
+    const offeneItems = base.filter((item) => !item.erledigt);
+    return [...offeneItems, ...erledigtItems];
+  }, [filter, items]);
 
-  const loadLocal = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(SHOPPING_STORAGE_KEY);
-    if (!stored) return;
-
-    try {
-      const parsed = JSON.parse(stored) as { list?: ShoppingList; checked?: CheckedMap };
-      if (parsed.list) {
-        setList(parsed.list);
-      }
-      if (parsed.checked) {
-        setCheckedMap(parsed.checked);
-      }
-    } catch (error) {
-      console.error('Konnte Einkaufsliste nicht laden', error);
-    }
-  }, [setList]);
-
-  useEffect(() => {
-    loadLocal();
-  }, [loadLocal]);
-
-  const apiNormalizer = useCallback((data: unknown) => normalizeFromApi(data), []);
-
-  const value = useMemo<UseShoppingListResult>(() => ({
-    list,
-    checked,
-    setList,
+  return {
+    items,
+    filter,
+    visibleItems,
+    setFilter,
+    replaceWithApiData,
+    addManualItem,
+    setErledigt,
+    removeItem,
+    restoreItem,
     reset,
-    setChecked,
-    bulkCheck,
-    saveLocal,
-    loadLocal,
-    normalizeFromApi: apiNormalizer
-  }), [apiNormalizer, bulkCheck, checked, list, loadLocal, reset, saveLocal, setChecked, setList]);
-
-  return value;
+    resetChecks,
+    markAll
+  };
 }

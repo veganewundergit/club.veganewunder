@@ -26,6 +26,7 @@ export function UploadCard({
   sizeLimitMb = DEFAULT_LIMIT_MB
 }: UploadCardProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const limitInBytes = sizeLimitMb * 1024 * 1024;
@@ -69,6 +70,14 @@ export function UploadCard({
           onChange={(event) => handleChange(event.target.files)}
         />
 
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => handleChange(event.target.files)}
+        />
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Button
             type="button"
@@ -76,7 +85,15 @@ export function UploadCard({
             onClick={() => inputRef.current?.click()}
             disabled={isLoading}
           >
-            Foto aufnehmen / Bild hochladen
+            Foto aufnehmen
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => galleryInputRef.current?.click()}
+            disabled={isLoading}
+          >
+            Bild aus Galerie wählen
           </Button>
           {file ? (
             <span className="text-xs text-muted-foreground">

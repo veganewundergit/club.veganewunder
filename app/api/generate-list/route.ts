@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { ResponseCreateParams } from 'openai/resources/responses/responses';
 import { getOpenAIClient } from '@/lib/openai';
-import { normalizeFromApi, SHOPPING_SECTIONS } from '@/lib/shopping';
+import { normalizeFromApi, SHOPPING_SECTIONS, groupByCategory } from '@/lib/shopping';
 
 const MAX_FILE_SIZE_MB = 10;
 const SYSTEM_PROMPT = `
@@ -101,9 +101,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const normalized = normalizeFromApi(parsed);
+    const normalizedItems = normalizeFromApi(parsed);
 
-    if (Object.keys(normalized).length === 0) {
+    if (normalizedItems.length === 0) {
       return NextResponse.json(
         {
           error: 'Keine Zutaten gefunden. Stelle sicher, dass das Bild die Zutatenliste gut lesbar zeigt.'
@@ -112,9 +112,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Ensure all sections exist, even if empty
+    const grouped = groupByCategory(normalizedItems);
+
     const responseBody = SHOPPING_SECTIONS.reduce<Record<string, string[]>>((acc, section) => {
-      acc[section] = normalized[section] ?? [];
+      acc[section] = grouped[section].map((item) => item.name);
       return acc;
     }, {});
 
