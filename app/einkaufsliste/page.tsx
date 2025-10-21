@@ -12,18 +12,64 @@ type ShoppingList = Record<string, ShoppingItem[]>;
 
 const STORAGE_KEY = 'vw-shopping-list';
 const SECTION_ORDER = ['Obst & Gemüse', 'Trockenware', 'Kühlregal', 'Tiefkühl', 'Sonstiges'];
+const FALLBACK_LABEL = 'Unbekannte Zutat';
+const LABEL_CANDIDATES = ['name', 'Name', 'label', 'Label', 'Zutat', 'Bezeichnung', 'value', 'Value', 'text', 'Text', 'title', 'Title'];
 
-function normalizeList(data: Record<string, string[]>): ShoppingList {
+function extractIngredientLabel(raw: unknown): string {
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed && trimmed !== '[object Object]') return trimmed;
+    return trimmed || FALLBACK_LABEL;
+  }
+
+  if (typeof raw === 'number' || typeof raw === 'boolean') {
+    return String(raw);
+  }
+
+  if (raw && typeof raw === 'object') {
+    const record = raw as Record<string, unknown>;
+    for (const key of LABEL_CANDIDATES) {
+      const candidate = record[key];
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) return trimmed;
+      }
+    }
+    const stringified = JSON.stringify(raw);
+    return stringified && stringified !== '{}' ? stringified : FALLBACK_LABEL;
+  }
+
+  if (raw === null || raw === undefined) {
+    return FALLBACK_LABEL;
+  }
+
+  return String(raw);
+}
+
+function normalizeList(data: Record<string, unknown[]>): ShoppingList {
   const entries = Object.entries(data ?? {});
   if (!entries.length) return {};
 
   return entries.reduce<ShoppingList>((acc, [section, items]) => {
-    acc[section] = (items ?? []).map((item) => ({
-      name: item,
+    const safeItems = Array.isArray(items) ? items : items !== undefined ? [items] : [];
+    acc[section] = safeItems.map((item) => ({
+      name: extractIngredientLabel(item),
       checked: false
     }));
     return acc;
   }, {});
+}
+
+function sanitizeShoppingList(list: ShoppingList): ShoppingList {
+  return Object.fromEntries(
+    Object.entries(list).map(([section, items]) => [
+      section,
+      items.map((item) => ({
+        ...item,
+        name: extractIngredientLabel(item?.name)
+      }))
+    ])
+  );
 }
 
 function isShoppingList(value: unknown): value is ShoppingList {
@@ -32,7 +78,12 @@ function isShoppingList(value: unknown): value is ShoppingList {
     (items) =>
       Array.isArray(items) &&
       items.every(
-        (item) => typeof item === 'object' && item !== null && typeof item.name === 'string' && typeof item.checked === 'boolean'
+        (item) =>
+          typeof item === 'object' &&
+          item !== null &&
+          'name' in item &&
+          'checked' in item &&
+          typeof (item as { checked: unknown }).checked === 'boolean'
       )
   );
 }
@@ -57,7 +108,7 @@ export default function EinkaufslistePage() {
       if (stored) {
         const parsed = JSON.parse(stored) as unknown;
         if (isShoppingList(parsed)) {
-          setList(parsed);
+          setList(sanitizeShoppingList(parsed));
         }
       }
     } catch (storageError) {
@@ -155,14 +206,14 @@ export default function EinkaufslistePage() {
         throw new Error(errorPayload?.error ?? 'Die Einkaufsliste konnte nicht generiert werden.');
       }
 
-      const payload = (await response.json()) as Record<string, string[]>;
+      const payload = (await response.json()) as Record<string, unknown[]>;
       const normalized = normalizeList(payload);
 
       if (Object.keys(normalized).length === 0) {
         setError('Es konnten keine Zutaten erkannt werden. Bitte versuche es mit einem anderen Bild.');
       }
 
-      setList(normalized);
+      setList(sanitizeShoppingList(normalized));
       setStatusMessage('Einkaufsliste aktualisiert.');
     } catch (generationError) {
       console.error(generationError);
@@ -280,17 +331,22 @@ export default function EinkaufslistePage() {
                 <div key={section}>
                   <h3 className="text-lg font-semibold">{section}</h3>
                   <ul className="mt-3 space-y-2">
-                    {items.map((item, index) => (
-                      <li key={`${section}-${item.name}-${index}`} className="flex items-center gap-3 rounded-lg border border-border/60 bg-background px-3 py-2">
-                        <input
-                          type="checkbox"
-                          checked={item.checked}
-                          onChange={() => toggleItem(section, index)}
-                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                        />
-                        <span className={`text-sm ${item.checked ? 'text-muted-foreground line-through' : ''}`}>{item.name}</span>
-                      </li>
-                    ))}
+                    {items.map((item, index) => {
+                      const displayLabel = extractIngredientLabel(
+                        typeof item === 'object' && item !== null ? item.name : item
+                      );
+                      return (
+                        <li key={`${section}-${displayLabel}-${index}`} className="flex items-center gap-3 rounded-lg border border-border/60 bg-background px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={item.checked}
+                            onChange={() => toggleItem(section, index)}
+                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                          />
+                          <span className={`text-sm ${item.checked ? 'text-muted-foreground line-through' : ''}`}>{displayLabel}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               );
