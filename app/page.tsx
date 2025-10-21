@@ -42,6 +42,9 @@ export default function HomePage() {
           <Button asChild variant="secondary" size="lg">
             <Link href="/club">Zum Club</Link>
           </Button>
+          <Button asChild size="lg">
+            <Link href="/einkaufsliste">Einkaufsliste generieren</Link>
+          </Button>
         </div>
       </section>
 
