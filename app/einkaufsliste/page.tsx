@@ -307,8 +307,10 @@ export default function EinkaufslistePage() {
           onClose={closeCamera}
           onError={(message) => {
             setCameraError(message);
+            cameraInputRef.current?.click();
             closeCamera();
           }}
+          onFallbackToUpload={() => cameraInputRef.current?.click()}
         />
       ) : null}
     </main>
@@ -319,9 +321,10 @@ interface CameraCaptureProps {
   onCapture: (file: File) => void;
   onClose: () => void;
   onError: (message: string) => void;
+  onFallbackToUpload: () => void;
 }
 
-function CameraCapture({ onCapture, onClose, onError }: CameraCaptureProps) {
+function CameraCapture({ onCapture, onClose, onError, onFallbackToUpload }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [isStarting, setIsStarting] = useState(true);
@@ -350,6 +353,7 @@ function CameraCapture({ onCapture, onClose, onError }: CameraCaptureProps) {
       } catch (error) {
         console.error('Kamera konnte nicht gestartet werden', error);
         onError('Kamera konnte nicht gestartet werden. Bitte erteile Zugriffsrechte oder verwende den Upload.');
+        onFallbackToUpload();
       }
     }
 
@@ -361,7 +365,7 @@ function CameraCapture({ onCapture, onClose, onError }: CameraCaptureProps) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [onError]);
+  }, [onError, onFallbackToUpload]);
 
   async function captureFrame() {
     if (!videoRef.current) return;
@@ -394,7 +398,13 @@ function CameraCapture({ onCapture, onClose, onError }: CameraCaptureProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 py-8">
       <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-xl">
         <div className="relative aspect-[3/4] w-full overflow-hidden rounded-xl border border-border">
-          <video ref={videoRef} className="h-full w-full object-cover" playsInline />
+          <video
+            ref={videoRef}
+            className="h-full w-full object-cover"
+            playsInline
+            autoPlay
+            muted
+          />
           {isStarting ? (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-sm text-white">
               Kamera wird gestartet…
