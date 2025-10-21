@@ -11,9 +11,7 @@ export function getStripeServerClient(): Stripe | null {
   }
 
   if (!stripeSingleton) {
-    stripeSingleton = new Stripe(stripeSecretKey, {
-      apiVersion: '2022-11-15'
-    });
+    stripeSingleton = new Stripe(stripeSecretKey);
   }
 
   return stripeSingleton;
