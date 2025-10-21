@@ -1,4 +1,4 @@
-import { createPagesBrowserClient, createServerClient } from '@supabase/auth-helpers-nextjs';
+import { createPagesBrowserClient, createPagesServerClient } from '@supabase/auth-helpers-nextjs';
 import type { SupabaseClient, Session } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
@@ -25,7 +25,9 @@ export function createSupabaseServerClient(): SupabaseClient | null {
     return null;
   }
 
-  return createServerClient(supabaseConfig.url, supabaseConfig.anonKey, {
+  return createPagesServerClient({
+    supabaseUrl: supabaseConfig.url,
+    supabaseKey: supabaseConfig.anonKey,
     cookies: {
       get(name: string) {
         return cookies().get(name)?.value;
