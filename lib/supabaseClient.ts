@@ -10,7 +10,7 @@ export const supabaseConfig = {
   anonKey: supabaseAnonKey
 };
 
-export function createSupabaseBrowserClient(): SupabaseClient | null {
+export function createSupabaseBrowserClient() {
   if (!supabaseConfig.url || !supabaseConfig.anonKey) {
     console.warn('Supabase Browser Client not initialised. Environment variables fehlen.');
     return null;
@@ -19,7 +19,7 @@ export function createSupabaseBrowserClient(): SupabaseClient | null {
   return createPagesBrowserClient({ supabaseUrl: supabaseConfig.url, supabaseKey: supabaseConfig.anonKey });
 }
 
-export function createSupabaseServerClient(): SupabaseClient | null {
+export function createSupabaseServerClient() {
   if (!supabaseConfig.url || !supabaseConfig.anonKey) {
     console.warn('Supabase Server Client not initialised. Environment variables fehlen.');
     return null;
