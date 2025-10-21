@@ -5,7 +5,7 @@ import type { Post } from '@/types/post';
 import type { Comment } from '@/types/comment';
 
 interface PostPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 const fallbackPost: Post = {
@@ -26,8 +26,8 @@ const fallbackComments: Comment[] = [
   }
 ];
 
-export default function PostDetailPage({ params }: PostPageProps) {
-  const { id } = params;
+export default async function PostDetailPage({ params }: PostPageProps) {
+  const { id } = await params;
 
   if (!id) {
     notFound();
