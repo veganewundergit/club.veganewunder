@@ -51,6 +51,3 @@ export default function ClubLandingPage() {
     </main>
   );
 }
- 'use client';
-
-import { useState } from 'react';
