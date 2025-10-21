@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import type { ResponseCreateParams } from 'openai/resources/responses/responses';
 
 const PROMPT =
   'Extrahiere alle Zutaten aus dem Bild und gib sie als strukturierte JSON-Liste zurück. Gruppiere sie in Supermarkt-Sektionen: Obst & Gemüse, Trockenware, Kühlregal, Tiefkühl, Sonstiges.';
@@ -31,21 +32,19 @@ export async function POST(request: Request) {
   const client = new OpenAI({ apiKey });
 
   try {
+    const input: ResponseCreateParams['input'] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: PROMPT },
+          { type: 'input_image', image_url: dataUrl, detail: 'high' }
+        ]
+      }
+    ];
+
     const response = await client.responses.create({
       model: 'gpt-4o-mini',
-      input: [
-        {
-          role: 'user',
-          content: [
-            { type: 'input_text', text: PROMPT },
-            {
-              type: 'input_image',
-              image_url: { url: dataUrl },
-              detail: 'auto'
-            }
-          ]
-        }
-      ]
+      input
     });
 
     const rawOutput = response.output_text ?? '';
