@@ -1,199 +1,64 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { UploadCard } from '@/components/shopping/UploadCard';
+import { ListView } from '@/components/shopping/ListView';
+import { useShoppingList } from '@/hooks/useShoppingList';
 import { Button } from '@/components/shared/Button';
+import { SHOPPING_SECTIONS, sanitizeShoppingList } from '@/lib/shopping';
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetClose } from '@/components/ui/sheet';
+import { useToast } from '@/components/ui/toast';
 
-type ShoppingItem = {
-  name: string;
-  checked: boolean;
-};
-
-type ShoppingList = Record<string, ShoppingItem[]>;
-
-const STORAGE_KEY = 'vw-shopping-list';
-const SECTION_ORDER = ['Obst & Gemüse', 'Trockenware', 'Kühlregal', 'Tiefkühl', 'Sonstiges'];
-const FALLBACK_LABEL = 'Unbekannte Zutat';
-const LABEL_CANDIDATES = ['name', 'Name', 'label', 'Label', 'Zutat', 'Bezeichnung', 'value', 'Value', 'text', 'Text', 'title', 'Title'];
-
-function extractIngredientLabel(raw: unknown): string {
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (trimmed && trimmed !== '[object Object]') return trimmed;
-    return trimmed || FALLBACK_LABEL;
-  }
-
-  if (typeof raw === 'number' || typeof raw === 'boolean') {
-    return String(raw);
-  }
-
-  if (raw && typeof raw === 'object') {
-    const record = raw as Record<string, unknown>;
-    for (const key of LABEL_CANDIDATES) {
-      const candidate = record[key];
-      if (typeof candidate === 'string') {
-        const trimmed = candidate.trim();
-        if (trimmed) return trimmed;
-      }
-    }
-    const stringified = JSON.stringify(raw);
-    return stringified && stringified !== '{}' ? stringified : FALLBACK_LABEL;
-  }
-
-  if (raw === null || raw === undefined) {
-    return FALLBACK_LABEL;
-  }
-
-  return String(raw);
-}
-
-function normalizeList(data: Record<string, unknown[]>): ShoppingList {
-  const entries = Object.entries(data ?? {});
-  if (!entries.length) return {};
-
-  return entries.reduce<ShoppingList>((acc, [section, items]) => {
-    const safeItems = Array.isArray(items) ? items : items !== undefined ? [items] : [];
-    acc[section] = safeItems.map((item) => ({
-      name: extractIngredientLabel(item),
-      checked: false
-    }));
-    return acc;
-  }, {});
-}
-
-function sanitizeShoppingList(list: ShoppingList): ShoppingList {
-  return Object.fromEntries(
-    Object.entries(list).map(([section, items]) => [
-      section,
-      items.map((item) => ({
-        ...item,
-        name: extractIngredientLabel(item?.name)
-      }))
-    ])
-  );
-}
-
-function isShoppingList(value: unknown): value is ShoppingList {
-  if (typeof value !== 'object' || value === null) return false;
-  return Object.values(value).every(
-    (items) =>
-      Array.isArray(items) &&
-      items.every(
-        (item) =>
-          typeof item === 'object' &&
-          item !== null &&
-          'name' in item &&
-          'checked' in item &&
-          typeof (item as { checked: unknown }).checked === 'boolean'
-      )
-  );
-}
+type Step = 1 | 2 | 3;
 
 export default function EinkaufslistePage() {
-  const [image, setImage] = useState<File | null>(null);
+  const { list, setList, checked, setChecked, bulkCheck, reset, saveLocal, normalizeFromApi } = useShoppingList();
+  const { addToast } = useToast();
+
+  const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [list, setList] = useState<ShoppingList>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [hasHydrated, setHasHydrated] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as unknown;
-        if (isShoppingList(parsed)) {
-          setList(sanitizeShoppingList(parsed));
-        }
-      }
-    } catch (storageError) {
-      console.error('Konnte gespeicherte Einkaufsliste nicht laden', storageError);
-    } finally {
-      setHasHydrated(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!statusMessage) return;
-    const timeout = window.setTimeout(() => setStatusMessage(null), 4000);
-    return () => window.clearTimeout(timeout);
-  }, [statusMessage]);
-
-  useEffect(() => {
-    if (!hasHydrated || typeof window === 'undefined') return;
-    try {
-      if (Object.keys(list).length === 0) {
-        window.localStorage.removeItem(STORAGE_KEY);
-        return;
-      }
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-    } catch (storageError) {
-      console.error('Konnte Einkaufsliste nicht speichern', storageError);
-    }
-  }, [list, hasHydrated]);
-
-  useEffect(() => {
-    if (!image) {
+    if (!file) {
       setPreviewUrl(null);
       return;
     }
 
-    const objectUrl = URL.createObjectURL(image);
+    const objectUrl = URL.createObjectURL(file);
     setPreviewUrl(objectUrl);
-
     return () => URL.revokeObjectURL(objectUrl);
-  }, [image]);
+  }, [file]);
 
-  const orderedSections = useMemo(() => {
-    const presentSections = Object.keys(list);
-    return SECTION_ORDER.filter((section) => presentSections.includes(section)).concat(
-      presentSections.filter((section) => !SECTION_ORDER.includes(section))
-    );
+  const hasList = useMemo(() => {
+    const sanitized = sanitizeShoppingList(list);
+    return Object.values(sanitized).some((items) => (items?.length ?? 0) > 0);
   }, [list]);
 
-  function handleFileChange(file: File | undefined) {
-    if (!file) return;
-    setImage(file);
-    setError(null);
-  }
+  const currentStep: Step = useMemo(() => {
+    if (isExtracting) return 2;
+    if (hasList) return 3;
+    if (file) return 2;
+    return 1;
+  }, [file, hasList, isExtracting]);
 
-  function closeCamera() {
-    setIsCameraOpen(false);
-  }
+  const totalItems = useMemo(() => {
+    return Object.values(list ?? {}).reduce((sum, items) => sum + (items?.length ?? 0), 0);
+  }, [list]);
 
-  function handleCapture(file: File) {
-    setImage(file);
-    setError(null);
-    setStatusMessage('Foto übernommen. Du kannst jetzt die Liste generieren.');
-  }
-
-  function handleCameraClick() {
-    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-      cameraInputRef.current?.click();
-      setCameraError('Dein Gerät unterstützt keinen direkten Kamera-Zugriff. Bitte wähle ein Foto aus.');
-      return;
-    }
-
-    setCameraError(null);
-    setIsCameraOpen(true);
-  }
-
-  async function handleGenerate() {
-    if (!image) {
-      setError('Bitte wähle ein Bild oder Foto aus.');
+  async function handleExtract() {
+    if (!file) {
+      setApiError('Bitte wähle ein Bild aus.');
       return;
     }
 
     const formData = new FormData();
-    formData.append('image', image);
+    formData.append('image', file);
 
-    setIsLoading(true);
-    setError(null);
+    setIsExtracting(true);
+    setApiError(null);
 
     try {
       const response = await fetch('/api/generate-list', {
@@ -202,280 +67,212 @@ export default function EinkaufslistePage() {
       });
 
       if (!response.ok) {
-        const errorPayload = await response.json().catch(() => null);
-        throw new Error(errorPayload?.error ?? 'Die Einkaufsliste konnte nicht generiert werden.');
+        const { error } = await response.json().catch(() => ({ error: 'Konnte keine Zutaten extrahieren. Bitte anderes Bild probieren.' }));
+        throw new Error(error ?? 'Konnte keine Zutaten extrahieren. Bitte anderes Bild probieren.');
       }
 
-      const payload = (await response.json()) as Record<string, unknown[]>;
-      const normalized = normalizeList(payload);
+      const payload = await response.json();
+      const normalized = normalizeFromApi(payload);
+      setList(normalized);
 
-      if (Object.keys(normalized).length === 0) {
-        setError('Es konnten keine Zutaten erkannt werden. Bitte versuche es mit einem anderen Bild.');
-      }
-
-      setList(sanitizeShoppingList(normalized));
-      setStatusMessage('Einkaufsliste aktualisiert.');
-    } catch (generationError) {
-      console.error(generationError);
-      setError(generationError instanceof Error ? generationError.message : 'Unerwarteter Fehler bei der Generierung.');
+      addToast({
+        title: 'Einkaufsliste aktualisiert',
+        description: 'Alle Zutaten sind gruppiert nach Supermarkt-Sektionen.',
+        variant: 'success'
+      });
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : 'Konnte keine Zutaten extrahieren. Bitte anderes Bild probieren.';
+      setApiError(message);
+      addToast({
+        title: 'Analyse fehlgeschlagen',
+        description: message,
+        variant: 'destructive'
+      });
     } finally {
-      setIsLoading(false);
+      setIsExtracting(false);
     }
   }
 
-  function toggleItem(section: string, index: number) {
-    setList((prev) => {
-      const items = prev[section];
-      if (!items) return prev;
-      const updatedSection = items.map((item, idx) =>
-        idx === index ? { ...item, checked: !item.checked } : item
-      );
-      return {
-        ...prev,
-        [section]: updatedSection
-      };
+  function handleFileSelect(next: File | null) {
+    setFile(next);
+    setApiError(null);
+    if (!next) {
+      reset();
+    }
+  }
+
+  function handleSave() {
+    saveLocal();
+    addToast({
+      title: 'Einkaufsliste gespeichert',
+      description: 'Deine Liste wurde lokal gesichert.'
     });
   }
 
-  return (
-    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-10 px-6 py-12">
-      <header className="space-y-3 text-center">
-        <h1 className="text-3xl font-semibold">Einkaufslisten-Generator</h1>
-        <p className="text-sm text-muted-foreground">
-          Lade ein Rezeptfoto hoch und erhalte eine strukturierte Einkaufsliste mit allen Zutaten.
-        </p>
-      </header>
-
-      <section className="flex flex-col gap-6 rounded-2xl border border-border bg-card p-6 shadow-sm">
-        <div className="space-y-2 text-sm">
-          <h2 className="font-medium">Rezeptfoto oder Screenshot</h2>
-          <p className="text-muted-foreground">
-            Wähle ein vorhandenes Bild oder nimm direkt ein Foto vom Rezept auf.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Bild auswählen
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={handleCameraClick}
-          >
-            Foto aufnehmen
-          </Button>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(event) => handleFileChange(event.target.files?.[0])}
-        />
-
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(event) => handleFileChange(event.target.files?.[0])}
-        />
-
-        {previewUrl ? (
-          <div className="flex justify-center">
-            <img src={previewUrl} alt="Rezeptvorschau" className="max-w-sm rounded-lg border border-border" />
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-3">
-          <Button type="button" onClick={handleGenerate} disabled={isLoading}>
-            {isLoading ? 'Analysiere Bild…' : 'Einkaufsliste generieren'}
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => setStatusMessage('Speichern folgt bald')}>
-            Liste speichern
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => setStatusMessage('Teilen-Funktion folgt bald')}>
-            Teilen
-          </Button>
-        </div>
-
-        {cameraError ? <p className="text-sm text-destructive">{cameraError}</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        {statusMessage ? <p className="text-sm text-primary">{statusMessage}</p> : null}
-      </section>
-
-      <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-        <h2 className="text-xl font-semibold">Deine Einkaufsliste</h2>
-        <p className="text-sm text-muted-foreground">
-          Markiere ab, was schon im Einkaufswagen ist – alles bleibt lokal auf deinem Gerät gespeichert.
-        </p>
-
-        {Object.keys(list).length === 0 ? (
-          <p className="mt-6 text-sm text-muted-foreground">
-            Noch keine Liste vorhanden. Lade ein Rezeptfoto hoch, um loszulegen.
-          </p>
-        ) : (
-          <div className="mt-6 space-y-6">
-            {orderedSections.map((section) => {
-              const items = list[section];
-              if (!items || items.length === 0) return null;
-
-              return (
-                <div key={section}>
-                  <h3 className="text-lg font-semibold">{section}</h3>
-                  <ul className="mt-3 space-y-2">
-                    {items.map((item, index) => {
-                      const displayLabel = extractIngredientLabel(
-                        typeof item === 'object' && item !== null ? item.name : item
-                      );
-                      return (
-                        <li key={`${section}-${displayLabel}-${index}`} className="flex items-center gap-3 rounded-lg border border-border/60 bg-background px-3 py-2">
-                          <input
-                            type="checkbox"
-                            checked={item.checked}
-                            onChange={() => toggleItem(section, index)}
-                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                          />
-                          <span className={`text-sm ${item.checked ? 'text-muted-foreground line-through' : ''}`}>{displayLabel}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-      {isCameraOpen ? (
-        <CameraCapture
-          onCapture={(file) => {
-            handleCapture(file);
-            closeCamera();
-          }}
-          onClose={closeCamera}
-          onError={(message) => {
-            setCameraError(message);
-            cameraInputRef.current?.click();
-            closeCamera();
-          }}
-          onFallbackToUpload={() => cameraInputRef.current?.click()}
-        />
-      ) : null}
-    </main>
-  );
-}
-
-interface CameraCaptureProps {
-  onCapture: (file: File) => void;
-  onClose: () => void;
-  onError: (message: string) => void;
-  onFallbackToUpload: () => void;
-}
-
-function CameraCapture({ onCapture, onClose, onError, onFallbackToUpload }: CameraCaptureProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [isStarting, setIsStarting] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: false
-        });
-
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        setIsStarting(false);
-      } catch (error) {
-        console.error('Kamera konnte nicht gestartet werden', error);
-        onError('Kamera konnte nicht gestartet werden. Bitte erteile Zugriffsrechte oder verwende den Upload.');
-        onFallbackToUpload();
-      }
+  async function handleCopyJson() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(list, null, 2));
+      addToast({ title: 'JSON kopiert', description: 'Liste wurde in die Zwischenablage kopiert.' });
+    } catch (error) {
+      console.error(error);
+      addToast({ title: 'Kopieren fehlgeschlagen', description: 'Bitte manuell kopieren.', variant: 'destructive' });
     }
-
-    startCamera();
-
-    return () => {
-      cancelled = true;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [onError, onFallbackToUpload]);
-
-  async function captureFrame() {
-    if (!videoRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      onError('Das Kamerabild konnte nicht verarbeitet werden.');
-      return;
-    }
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        onError('Das Foto konnte nicht erstellt werden.');
-        return;
-      }
-
-      const file = new File([blob], `rezept-${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
-      onCapture(file);
-    }, 'image/jpeg');
   }
 
+  async function handleCopyText() {
+    try {
+      const lines = SHOPPING_SECTIONS.map((section) => {
+        const items = list[section];
+        if (!items || items.length === 0) return null;
+        return `${section}:\n${items.map((item) => `• ${item}`).join('\n')}`;
+      }).filter(Boolean);
+      await navigator.clipboard.writeText(lines.join('\n\n'));
+      addToast({ title: 'Textliste kopiert', description: 'Alle Zutaten befinden sich in der Zwischenablage.' });
+    } catch (error) {
+      console.error(error);
+      addToast({ title: 'Kopieren fehlgeschlagen', description: 'Bitte manuell kopieren.', variant: 'destructive' });
+    }
+  }
+
+  function handleResetChecks() {
+    SHOPPING_SECTIONS.forEach((section) => bulkCheck(section, false));
+  }
+
+  const steps = [
+    { id: 1, label: 'Upload' },
+    { id: 2, label: 'Erkennen' },
+    { id: 3, label: 'Liste' }
+  ] as const;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 py-8">
-      <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-xl">
-        <div className="relative aspect-[3/4] w-full overflow-hidden rounded-xl border border-border">
-          <video
-            ref={videoRef}
-            className="h-full w-full object-cover"
-            playsInline
-            autoPlay
-            muted
-          />
-          {isStarting ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-sm text-white">
-              Kamera wird gestartet…
-            </div>
-          ) : null}
+    <main className="mx-auto flex min-h-screen w-full max-w-screen-sm flex-col gap-6 bg-background px-4 pb-32 pt-6">
+      <header className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Einkaufslisten-Generator</h1>
+          {totalItems > 0 ? <span className="text-xs text-muted-foreground">{totalItems} Artikel</span> : null}
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Abbrechen
-          </Button>
-          <Button type="button" onClick={captureFrame}>
-            Foto übernehmen
-          </Button>
+        <nav aria-label="Fortschritt" className="flex items-center justify-between text-sm">
+          {steps.map((step) => {
+            const isActive = currentStep >= step.id;
+            const isCurrent = currentStep === step.id;
+            return (
+              <div key={step.id} className="flex flex-1 items-center gap-2">
+                <div
+                  className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition ${
+                    isActive ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {step.id}
+                </div>
+                <span className={`text-xs ${isCurrent ? 'text-foreground' : 'text-muted-foreground'}`}>{step.label}</span>
+                {step.id !== steps.length ? <div className={`ml-3 hidden h-px flex-1 sm:block ${currentStep > step.id ? 'bg-primary' : 'bg-border'}`} /> : null}
+              </div>
+            );
+          })}
+        </nav>
+      </header>
+
+      <UploadCard
+        file={file}
+        previewUrl={previewUrl}
+        onFileSelect={handleFileSelect}
+        onClear={() => handleFileSelect(null)}
+        isLoading={isExtracting}
+        error={apiError}
+      />
+
+      {isExtracting ? (
+        <section
+          className="rounded-2xl border border-border bg-card p-6 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="animate-pulse space-y-4">
+              <div className="h-4 w-1/2 rounded bg-muted" />
+              <div className="h-3 w-3/4 rounded bg-muted" />
+              <div className="h-3 w-2/3 rounded bg-muted" />
+            </div>
+            <p className="text-sm text-muted-foreground">Analysiere Rezept …</p>
+          </div>
+        </section>
+      ) : null}
+
+      {hasList && !isExtracting ? (
+        <ListView
+          list={list}
+          checked={checked}
+          onToggle={setChecked}
+          onBulk={bulkCheck}
+          onReset={handleResetChecks}
+        />
+      ) : null}
+
+      {!hasList && !isExtracting && !file ? (
+        <section className="rounded-2xl border border-dashed border-border bg-card/40 p-6 text-center text-sm text-muted-foreground">
+          Noch keine Liste vorhanden. Lade ein Rezeptfoto hoch, um loszulegen.
+        </section>
+      ) : null}
+
+      <div className="fixed inset-x-0 bottom-0 border-t border-border bg-background/95 px-4 py-4 shadow-[0_-4px_24px_-12px_rgb(15,23,42,0.2)]">
+        <div className="mx-auto flex w-full max-w-screen-sm items-center justify-between gap-3">
+          {currentStep < 3 ? (
+            <Button
+              className="flex-1"
+              size="lg"
+              onClick={handleExtract}
+              disabled={!file || isExtracting}
+            >
+              Einkaufsliste generieren
+            </Button>
+          ) : (
+            <>
+              <Button type="button" variant="secondary" onClick={handleSave} className="flex-1" size="lg">
+                Speichern
+              </Button>
+              <Button type="button" className="flex-1" size="lg" onClick={() => setShareOpen(true)}>
+                Teilen
+              </Button>
+            </>
+          )}
         </div>
       </div>
-    </div>
+
+      <Sheet open={shareOpen} onOpenChange={setShareOpen}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Teilen</SheetTitle>
+            <SheetClose>✕</SheetClose>
+          </SheetHeader>
+          <div className="space-y-4 px-6 py-4">
+            <SheetDescription>Wähle eine Option, um die Liste zu teilen.</SheetDescription>
+            <Button type="button" variant="secondary" onClick={handleCopyJson}>
+              JSON kopieren
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleCopyText}>
+              Textliste kopieren
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() =>
+                addToast({
+                  title: 'Bald verfügbar',
+                  description: 'Öffentlicher Link wird in Kürze unterstützt.'
+                })
+              }
+            >
+              Öffentlichen Link erstellen (bald)
+            </Button>
+          </div>
+          <SheetFooter>
+            <Button variant="secondary" onClick={() => setShareOpen(false)}>
+              Schließen
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </main>
   );
 }

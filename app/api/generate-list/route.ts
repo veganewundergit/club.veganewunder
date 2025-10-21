@@ -1,22 +1,31 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import type { ResponseCreateParams } from 'openai/resources/responses/responses';
+import { getOpenAIClient } from '@/lib/openai';
+import { normalizeFromApi, SHOPPING_SECTIONS } from '@/lib/shopping';
 
-const PROMPT =
-  'Extrahiere alle Zutaten aus dem Bild und gib sie als strukturierte JSON-Liste zurück. Gruppiere sie in Supermarkt-Sektionen: Obst & Gemüse, Trockenware, Kühlregal, Tiefkühl, Sonstiges.';
+const MAX_FILE_SIZE_MB = 10;
+const SYSTEM_PROMPT = `
+Du bist ein Assistent, der Zutaten aus Rezeptbildern extrahiert.
+Analysiere das Bild und gib ausschließlich JSON zurück – keine Erklärungen, keine Markdown-Codeblöcke.
+Verwende exakt diese Struktur:
+{
+  "Obst & Gemüse": ["..."],
+  "Trockenware": ["..."],
+  "Kühlregal": ["..."],
+  "Tiefkühl": ["..."],
+  "Sonstiges": ["..."]
+}
+Nur Zutaten-Auflistungen, keine Zubereitungsschritte. Keine leeren Strings, keine Duplikate.
+`;
 
 export const runtime = 'nodejs';
 
+function extractJsonBlock(content: string) {
+  const match = content.match(/\{[\s\S]*\}/);
+  return match ? match[0] : content;
+}
+
 export async function POST(request: Request) {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: 'OPENAI_API_KEY is not configured.' },
-      { status: 500 }
-    );
-  }
-
   const formData = await request.formData();
   const file = formData.get('image');
 
@@ -24,20 +33,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Bilddatei ist erforderlich.' }, { status: 400 });
   }
 
+  if (!file.type.startsWith('image/')) {
+    return NextResponse.json({ error: 'Bitte lade nur Bilddateien hoch.' }, { status: 400 });
+  }
+
+  const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024;
+  if (file.size > maxBytes) {
+    return NextResponse.json({ error: `Datei ist zu groß. Maximal ${MAX_FILE_SIZE_MB} MB.` }, { status: 413 });
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
   const mimeType = file.type || 'image/jpeg';
-  const base64Image = buffer.toString('base64');
-  const dataUrl = `data:${mimeType};base64,${base64Image}`;
+  const base64 = buffer.toString('base64');
+  const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  const client = new OpenAI({ apiKey });
+  let client;
+  try {
+    client = getOpenAIClient();
+  } catch (error) {
+    console.error('OPENAI_API_KEY fehlt.', error);
+    return NextResponse.json({ error: 'OPENAI_API_KEY ist nicht konfiguriert.' }, { status: 500 });
+  }
 
   try {
     const input: ResponseCreateParams['input'] = [
       {
+        role: 'system',
+        content: [{ type: 'input_text', text: SYSTEM_PROMPT }]
+      },
+      {
         role: 'user',
         content: [
-          { type: 'input_text', text: PROMPT },
-          { type: 'input_image', image_url: dataUrl, detail: 'high' }
+          {
+            type: 'input_text',
+            text: 'Analysiere dieses Rezeptbild und extrahiere die Zutaten.'
+          },
+          {
+            type: 'input_image',
+            image_url: dataUrl,
+            detail: 'high'
+          }
         ]
       }
     ];
@@ -48,28 +83,42 @@ export async function POST(request: Request) {
     });
 
     const rawOutput = response.output_text ?? '';
-
     if (!rawOutput) {
-      return NextResponse.json({ error: 'Keine Antwort vom Modell erhalten.' }, { status: 500 });
+      return NextResponse.json({ error: 'Keine Antwort vom Modell erhalten.' }, { status: 502 });
     }
 
     let parsed;
 
     try {
-      const match = rawOutput.match(/\{[\s\S]*\}/);
-      const jsonPayload = match ? match[0] : rawOutput;
-      parsed = JSON.parse(jsonPayload);
-    } catch (parseError) {
+      parsed = JSON.parse(extractJsonBlock(rawOutput));
+    } catch (error) {
+      console.error('Antwort konnte nicht geparst werden', rawOutput, error);
       return NextResponse.json(
         {
-          error: 'Antwort konnte nicht als JSON interpretiert werden.',
-          raw: rawOutput
+          error: 'Konnte keine Zutaten extrahieren. Bitte anderes Bild probieren.'
         },
-        { status: 502 }
+        { status: 422 }
       );
     }
 
-    return NextResponse.json(parsed);
+    const normalized = normalizeFromApi(parsed);
+
+    if (Object.keys(normalized).length === 0) {
+      return NextResponse.json(
+        {
+          error: 'Keine Zutaten gefunden. Stelle sicher, dass das Bild die Zutatenliste gut lesbar zeigt.'
+        },
+        { status: 422 }
+      );
+    }
+
+    // Ensure all sections exist, even if empty
+    const responseBody = SHOPPING_SECTIONS.reduce<Record<string, string[]>>((acc, section) => {
+      acc[section] = normalized[section] ?? [];
+      return acc;
+    }, {});
+
+    return NextResponse.json(responseBody);
   } catch (error) {
     console.error('Fehler bei der OpenAI-Anfrage', error);
     return NextResponse.json(
